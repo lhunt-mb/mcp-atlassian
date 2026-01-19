@@ -616,3 +616,180 @@ def test_md2conf_elements_from_string_available():
     from mcp_atlassian.preprocessing.confluence import elements_from_string
 
     assert callable(elements_from_string)
+
+
+# Confluence Native Emoticon Tests
+
+
+def test_process_confluence_emoticon_with_name(preprocessor_with_confluence):
+    """Test processing Confluence emoticon with ac:name attribute."""
+    html = '<p>Status: <ac:emoticon ac:name="tick" /> Done!</p>'
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
+    )
+    assert "✅" in processed_html
+    assert "✅" in processed_markdown
+
+
+def test_process_confluence_emoticon_blue_star(preprocessor_with_confluence):
+    """Test processing blue-star emoticon (from mock data)."""
+    html = '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Date</h2>'
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
+    )
+    assert "💙" in processed_html
+    assert "💙" in processed_markdown
+
+
+def test_process_confluence_emoticon_all_standard(preprocessor_with_confluence):
+    """Test processing all standard Confluence emoticons."""
+    emoticons_to_test = [
+        ("smile", "😊"),
+        ("sad", "😢"),
+        ("cheeky", "😛"),
+        ("laugh", "😄"),
+        ("wink", "😉"),
+        ("thumbs-up", "👍"),
+        ("thumbs-down", "👎"),
+        ("information", "ℹ️"),
+        ("tick", "✅"),
+        ("cross", "❌"),
+        ("warning", "⚠️"),
+        ("plus", "➕"),
+        ("minus", "➖"),
+        ("question", "❓"),
+        ("light-on", "💡"),
+        ("light-off", "🔌"),
+        ("yellow-star", "⭐"),
+        ("red-star", "🌟"),
+        ("green-star", "💚"),
+        ("blue-star", "💙"),
+        ("heart", "❤️"),
+        ("broken-heart", "💔"),
+    ]
+
+    for name, expected_emoji in emoticons_to_test:
+        html = f'<p><ac:emoticon ac:name="{name}" /></p>'
+        processed_html, processed_markdown = (
+            preprocessor_with_confluence.process_html_content(
+                html, confluence_client=MockConfluenceClient()
+            )
+        )
+        assert expected_emoji in processed_html, f"Expected {expected_emoji} for {name}"
+        assert (
+            expected_emoji in processed_markdown
+        ), f"Expected {expected_emoji} in markdown for {name}"
+
+
+def test_process_confluence_emoticon_with_fallback_attr(preprocessor_with_confluence):
+    """Test processing emoticon with ac:emoji-fallback attribute (preferred)."""
+    html = '<p><ac:emoticon ac:name="custom" ac:emoji-fallback="🎉" /></p>'
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
+    )
+    # Should use emoji-fallback when available
+    assert "🎉" in processed_html
+    assert "🎉" in processed_markdown
+
+
+def test_process_confluence_emoticon_with_emoji_id(preprocessor_with_confluence):
+    """Test processing emoticon with ac:emoji-id attribute (Unicode code point)."""
+    # 1f499 is the hex code for blue heart emoji
+    html = '<p><ac:emoticon ac:name="unknown" ac:emoji-id="1f499" /></p>'
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
+    )
+    # Should convert hex code to Unicode character
+    assert "💙" in processed_html
+    assert "💙" in processed_markdown
+
+
+def test_process_confluence_emoticon_unknown_name_fallback(preprocessor_with_confluence):
+    """Test processing emoticon with unknown name falls back to shortcode."""
+    html = '<p><ac:emoticon ac:name="custom-unknown-emoji" /></p>'
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
+    )
+    # Should fall back to :name: format
+    assert ":custom-unknown-emoji:" in processed_html
+    assert ":custom-unknown-emoji:" in processed_markdown
+
+
+def test_process_confluence_emoticon_multiple(preprocessor_with_confluence):
+    """Test processing multiple emoticons in content."""
+    html = """<p>
+        <ac:emoticon ac:name="tick" /> Approved
+        <ac:emoticon ac:name="warning" /> Review needed
+        <ac:emoticon ac:name="cross" /> Rejected
+    </p>"""
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
+    )
+    assert "✅" in processed_markdown
+    assert "⚠️" in processed_markdown
+    assert "❌" in processed_markdown
+
+
+def test_process_confluence_emoticon_in_real_content(preprocessor_with_confluence):
+    """Test processing emoticons in realistic page content (from mock data format)."""
+    html_content = (
+        '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Date</h2>'
+        '<p><time datetime="2024-01-01" /></p>'
+        '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Participants</h2>'
+        "<ul><li><p>John Doe</p></li></ul>"
+        '<h2><ac:emoticon ac:name="blue-star" />&nbsp;Goals</h2>'
+        "<ul><li><p>Example goal</p></li></ul>"
+    )
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html_content, confluence_client=MockConfluenceClient()
+        )
+    )
+    # All blue-star emoticons should be converted
+    assert processed_markdown.count("💙") == 3
+    # Verify structure is preserved
+    assert "Date" in processed_markdown
+    assert "Participants" in processed_markdown
+    assert "Goals" in processed_markdown
+
+
+def test_process_confluence_emoticon_empty_attributes(preprocessor_with_confluence):
+    """Test processing emoticon with no recognizable attributes."""
+    html = "<p><ac:emoticon /></p>"
+    processed_html, processed_markdown = (
+        preprocessor_with_confluence.process_html_content(
+            html, confluence_client=MockConfluenceClient()
+        )
+    )
+    # Should gracefully handle and remove the empty element
+    assert "ac:emoticon" not in processed_html
+
+
+def test_confluence_emoticon_map_exported():
+    """Test that CONFLUENCE_EMOTICON_MAP is accessible and has expected entries."""
+    from mcp_atlassian.preprocessing.base import CONFLUENCE_EMOTICON_MAP
+
+    # Verify it's a dictionary
+    assert isinstance(CONFLUENCE_EMOTICON_MAP, dict)
+
+    # Verify it has expected entries
+    assert "smile" in CONFLUENCE_EMOTICON_MAP
+    assert "tick" in CONFLUENCE_EMOTICON_MAP
+    assert "blue-star" in CONFLUENCE_EMOTICON_MAP
+
+    # Verify values are strings (emoji characters)
+    for name, emoji in CONFLUENCE_EMOTICON_MAP.items():
+        assert isinstance(emoji, str), f"Expected string for {name}"
+        assert len(emoji) > 0, f"Expected non-empty emoji for {name}"

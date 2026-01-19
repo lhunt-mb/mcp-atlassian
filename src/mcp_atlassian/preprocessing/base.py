@@ -10,6 +10,92 @@ from markdownify import markdownify as md
 
 logger = logging.getLogger("mcp-atlassian")
 
+# Mapping of Confluence emoticon ac:name values to Unicode emoji characters.
+#
+# Note: Confluence Cloud includes additional attributes (ac:emoji-fallback, ac:emoji-id)
+# that contain the actual Unicode characters. The _process_emoticons_in_soup method
+# checks those attributes FIRST, so this mapping is primarily used as a fallback for:
+# - Confluence Server/Data Center content (which may only have ac:name)
+# - Older content that lacks the newer attributes
+#
+# Based on Atlassian Confluence API Emoticon enum:
+# https://docs.atlassian.com/ConfluenceServer/javadoc/10.1.1/com/atlassian/confluence/content/render/xhtml/model/inline/Emoticon.html
+CONFLUENCE_EMOTICON_MAP: dict[str, str] = {
+    # Face emoticons
+    "smile": "😊",
+    "sad": "😢",
+    "cheeky": "😛",
+    "laugh": "😄",
+    "wink": "😉",
+    "tongue": "😛",
+    # Gesture emoticons
+    "thumbs-up": "👍",
+    "thumbs-down": "👎",
+    # Status/indicator emoticons
+    "information": "ℹ️",
+    "info": "ℹ️",
+    "tick": "✅",
+    "cross": "❌",
+    "warning": "⚠️",
+    "plus": "➕",
+    "minus": "➖",
+    "question": "❓",
+    "flag": "🚩",
+    "flag-off": "🏁",
+    # Light bulb emoticons
+    "light-on": "💡",
+    "light-off": "🔌",
+    # Star emoticons
+    "yellow-star": "⭐",
+    "red-star": "🌟",
+    "green-star": "💚",
+    "blue-star": "💙",
+    "star-yellow": "⭐",
+    "star-red": "🌟",
+    "star-green": "💚",
+    "star-blue": "💙",
+    # Heart emoticons
+    "heart": "❤️",
+    "broken-heart": "💔",
+    # Additional emoticons commonly found in Confluence
+    "checkmark": "✅",
+    "check": "✅",
+    "error": "❌",
+    "forbidden": "🚫",
+    "approved": "✅",
+    "declined": "❌",
+    "note": "📝",
+    "calendar": "📅",
+    "attachment": "📎",
+    "time": "⏰",
+    "clock": "🕐",
+    "fire": "🔥",
+    "trophy": "🏆",
+    "target": "🎯",
+    "rocket": "🚀",
+    "bulb": "💡",
+    "idea": "💡",
+    "book": "📖",
+    "email": "📧",
+    "mail": "📧",
+    "phone": "📞",
+    "home": "🏠",
+    "user": "👤",
+    "users": "👥",
+    "group": "👥",
+    "locked": "🔒",
+    "unlocked": "🔓",
+    "key": "🔑",
+    "search": "🔍",
+    "settings": "⚙️",
+    "gear": "⚙️",
+    "tools": "🔧",
+    "wrench": "🔧",
+    "star": "⭐",
+    "favourite": "⭐",
+    "favorite": "⭐",
+}
+
 
 class ConfluenceClient(Protocol):
     """Protocol for Confluence client."""
@@ -59,6 +145,9 @@ class BasePreprocessor:
             # Process user mentions
             self._process_user_mentions_in_soup(soup, confluence_client)
             self._process_user_profile_macros_in_soup(soup, confluence_client)
+
+            # Process native Confluence emoticons
+            self._process_emoticons_in_soup(soup)
 
             # Convert to string and markdown
             processed_html = str(soup)
@@ -178,6 +267,59 @@ class BasePreprocessor:
                 fallback_text = f"[User Profile: {fallback_identifier}]"
                 macro_element.replace_with(fallback_text)
                 logger.debug(f"Using fallback for user profile macro: {fallback_text}")
+
+    def _process_emoticons_in_soup(self, soup: BeautifulSoup) -> None:
+        """
+        Process Confluence native emoticons in BeautifulSoup object.
+        Replaces <ac:emoticon ac:name="..." /> elements with their Unicode emoji equivalents.
+
+        Confluence stores native emoticons in storage format as:
+        <ac:emoticon ac:name="blue-star" />
+
+        These may also include additional attributes for newer emojis:
+        <ac:emoticon ac:name="blue-star" ac:emoji-shortname=":blue_heart:"
+                     ac:emoji-id="1f499" ac:emoji-fallback="..." />
+
+        Args:
+            soup: BeautifulSoup object containing HTML
+        """
+        emoticons = soup.find_all("ac:emoticon")
+
+        for emoticon_element in emoticons:
+            # First, try to get the emoji-fallback attribute (contains actual Unicode)
+            emoji_fallback = emoticon_element.get("ac:emoji-fallback")
+            if emoji_fallback and isinstance(emoji_fallback, str):
+                emoticon_element.replace_with(emoji_fallback)
+                continue
+
+            # Second, try to convert from emoji-id (Unicode code point)
+            emoji_id = emoticon_element.get("ac:emoji-id")
+            if emoji_id and isinstance(emoji_id, str):
+                try:
+                    # emoji-id is a hex Unicode code point (e.g., "1f499" for blue heart)
+                    unicode_char = chr(int(emoji_id, 16))
+                    emoticon_element.replace_with(unicode_char)
+                    continue
+                except (ValueError, OverflowError):
+                    logger.debug(f"Could not convert emoji-id '{emoji_id}' to Unicode")
+
+            # Third, use the ac:name attribute and map to our emoji dictionary
+            emoticon_name = emoticon_element.get("ac:name")
+            if emoticon_name and isinstance(emoticon_name, str):
+                emoji_char = CONFLUENCE_EMOTICON_MAP.get(emoticon_name)
+                if emoji_char:
+                    emoticon_element.replace_with(emoji_char)
+                else:
+                    # Fallback: use the emoticon name as a shortcode
+                    fallback_text = f":{emoticon_name}:"
+                    emoticon_element.replace_with(fallback_text)
+                    logger.debug(
+                        f"Unknown emoticon '{emoticon_name}', using fallback: {fallback_text}"
+                    )
+            else:
+                # No recognizable attributes, remove the element
+                logger.debug("Emoticon element found with no recognizable attributes")
+                emoticon_element.replace_with("")
 
     def _replace_user_mention(
         self,
